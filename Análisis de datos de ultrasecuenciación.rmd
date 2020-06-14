@@ -1,0 +1,1245 @@
+---
+title: "Análisis de datos de ultrasecuenciación (PEC 2)"
+author: "Laura Ramon"
+date: "Junio 2020"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+#ABSTRACT#
+
+<div style="text-align: justify">La enfermedad tiroidea autoinmune, la cual incluye diferentes formas clínicas de tiroiditis autoinmune, como la tiroiditis de Hashimoto o la enfermedad de Graves, se caracteriza por la producción de anticuerpos contra al menos uno de los principales autoantígenos específicos de la tiroides, como la tiroglobulina (Tg), la proteína principal del coloide; la tiroperoxidasa (TPO), la enzima que cataliza la organización del yodo, y el receptor de tirotropina (TSH-R). Histológicamente, la TH se caracteriza por una infiltración linfocítica que puede reemplazar progresivamente los folículos tiroideos. Todas las formas se caracterizan patológicamente por la infiltración de células mononucleares hematopoyéticas, principalmente linfocitos, en el intersticio entre los folículos tiroideos, aunque se pueden reconocer características específicas en cada variante.[1][2]<div/> 
+
+
+#OBJETIVOS#
+
+<div style="text-align: justify">El objetivo de este estudio es realizar un análisis de datos de ultrasecuenciación, en concreto, de datos de expresión (RNAseq), con la finalidad de observar las diferencias en la expresión génica en diferentes muestras de tejidos de tiroides, con distinto tipo de infiltración.<div/> 
+
+#MATERIALES Y MÉTODOS#
+
+##Materiales##
+
+###Datos###
+
+<div style="text-align: justify">Este estudio se aplica en un conjunto de datos publicados en el proyecto GTEx, un repositorio público con datos de diferentes genes de 54 tejidos de más de 1000 individuos, los cuales pueden ser usados para la relización de posteriores estudios de expresión génica.
+
+En este estudio se han escogido 292 muestras de tejido de tiroides, las cuales se dividen en tres grupos según su grado de infiltración linfocitaria:
+
+- __Grupo NIT__ (_not infiltrated tissues_): 236 muestras
+- __Grupo SFI__ (_small focal infiltrates_): 42 muestras
+- __Grupo ELI__ (_extensive lymphoid infiltrates_): 14 muestras
+
+ 
+##Métodos##
+
+###Directorio y opciones de trabajo###
+
+<div style="text-align: justify">Se escoge un directorio de trabajo dónde se ubicarán los archivos _targets_ y _counts_ y dónde se almacenarán los datos resultantes del estudio.<div/>
+
+###Obtención de los datos###
+
+<div style="text-align: justify">Los datos expuestos anteriormente son proporcionados por los archivos _targets_ y _counts_.
+
+- __Targets__: este archivo contiene toda la información sobre las 292 muestras de tiroides del estudio, como son el nombre de la muestra, el nombre experimento, el grupo, el sexo o el nombre corto. 
+- __Counts__: este archivo contiene la tabla de conteo de genes de las 292 muestras.
+
+Debido al gran número de muestras, se seleccionan aleatoriamente 10 muestras de cada grupo, quedando el estudio reducido al análisis de 30 muestras en total.
+
+```{r include=FALSE}
+library(readr)
+targets <- read_csv("~/Màster de Bioinformàtica i Bioestadística/Anàlisi de dades òmiques/PEC 2/targets.csv")
+counts <- read_delim("~/Màster de Bioinformàtica i Bioestadística/Anàlisi de dades òmiques/PEC 2/counts.csv",";", escape_double = FALSE, trim_ws = TRUE)
+```
+
+```{r include=FALSE}
+set.seed(59)
+library(dplyr)
+```
+
+```{r include=FALSE}
+NIT <- subset(targets,Grupo_analisis==1)
+NIT.sample <- sample_n(NIT,size=10)
+```
+
+```{r include=FALSE}
+SFI <- subset(targets,Grupo_analisis==2)
+SFI.sample <- sample_n(SFI,size=10)
+```
+
+```{r include=FALSE}
+ELI <- subset(targets,Grupo_analisis==3)
+ELI.sample <- sample_n(ELI,size=10)
+```
+
+```{r include=FALSE}
+samples <- rbind(NIT.sample,SFI.sample,ELI.sample)
+```
+
+En la siguiente tabla se muestran las muestras seleccionadas del archivo _targets_. 
+
+```{r echo = FALSE}
+library(knitr)
+knitr::kable(
+samples, booktabs = TRUE, 
+caption = 'Tabla 1. Información de las 30 muestras obtenidas aleatoriamente del archivo targets')
+```
+
+En el archivo _counts_ se observa que el formato de los genes no corresponde exactamente con el formato Ensembl, pues le sobra el punto y número final. Así pues, se procede a eliminar dicha parte. 
+
+```{r echo=FALSE}
+counts$X1<-gsub("\\..*", "", counts$X1, fixed = FALSE)
+```
+
+A continuación, se "subsetea" el archivo _counts_ con las 30 muestras obtenidas anteriormente, de manera que se tendrá la tabla de conteos de sólo estas muestras. 
+
+```{r include=FALSE}
+counts.samples <- select(counts,samples$Sample_Name)
+```
+
+```{r include=FALSE}
+Ensembl.gene <- counts$X1
+```
+
+```{r include=FALSE}
+countdata <- cbind(Ensembl.gene,counts.samples,row.names=1)
+```
+
+En la siguiente tabla se observan las primeras filas de la tabla de conteos de las 30 muestras. 
+
+```{r echo = FALSE}
+library(knitr)
+knitr::kable(
+head(countdata), booktabs = TRUE, 
+caption = 'Tabla 2. Primeras filas de la tabla de conteos de las 30 muestras')
+```
+
+Se obtiene una matriz de conteo, dónde cada fila representa un gen Ensembl (en concreto, hay 56202 genes), cada columna representa una muestra de ARN secuenciada y los valores representan el número de fragmentos asignados al gen respectivo. 
+
+A continuación, se construye el objeto _DESeqDataSet_ a partir de la matriz de recuentos y la tabla de información de las muestras usando la función _DESeqDataSetFromMatrix()_ del paquete _DESeq2_.<div/>  
+
+```{r eval=FALSE, include=FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("DESeq2")
+```
+```{r include=FALSE}
+library(DESeq2)
+```
+
+```{r include=FALSE}
+dds <- DESeqDataSetFromMatrix(countData = countdata,
+                              colData = samples,
+                              design = ~ Group)
+```
+```{r}
+dds
+```
+
+###Análisis exploratorio y visualización de los datos###
+
+__Prefiltrado del conjunto de datos__
+
+<div style="text-align: justify">En primer lugar, debido a que a la matriz de conteo contiene numerosas filas con valores 0 y otras con pocos fragmentos, se procederá a reducir el tamaño del objeto _DESeqDataSet_ eliminando dichas filas, las cuales contienen poca o ninguna información sobre la expresión génica. 
+
+Se eliminarán las filas que no contienen recuentos o que tienen un solo recuento en todas las muestras. 
+
+```{r include=FALSE}
+nrow(dds)
+```
+
+```{r include=FALSE}
+dds <- dds[rowSums(counts(dds)) > 1, ]
+nrow(dds)
+```
+
+Con este paso, se eliminan 12677 filas de genes. Se pasa de tener 56202 filas a tener 43525 filas. 
+
+__Transformación estabilizadora de la varianza__
+
+Para poder analizar los datos mediante métodos estadísticos, es importante que éstos tengan un mismo rango de varianza en diferentes rangos de valores medios, es decir, que sean homocedásticos. En el caso de los recuentos de RNA-seq, la varianza se espera que crezca con la media, de manera que se tendrán que realizar transformaciones sobre los datos para estabilizar la varianza. Existen dos métodos para realizar estas transformaciones: _VST_ y _rlog_. En este estudio, se realizarán ambos y, posteriormente, se compararán sus resultados. 
+
+- VST
+
+El método _VST_ se usa para datos binomiales negativos con una tendencia de dispersión media. Es fácil de calcular y es menos sensible a valores atípicos de conteo. 
+
+Para ello, se usa la función _vst()_ y en ella se especifica que las diferencias entre las muestras no contribuyan a la tendencia media-varianza esperada del experimento. 
+
+```{r echo=FALSE}
+vsd <- vst(dds, blind=FALSE)
+```
+```{r echo=FALSE}
+knitr::kable(
+head(assay(vsd),3), booktabs = TRUE, 
+caption = 'Tabla 3. Primeras filas y muestras de los datos transformados con el método VST')
+```
+
+En la siguiente tabla del colData (información de las muestras), aparece una nueva columna con los _size factors_.
+
+```{r echo=FALSE}
+knitr::kable(
+head(colData(vsd),3), booktabs = TRUE, 
+caption = 'Tabla 4. Información de las muestras tras la transformación VST')
+```
+
+- Rlog
+
+El método _rlog_ es un método que funciona bien en grupos pequeños (inferiores a 30). En la tabla se observan las primeras filas y muestras de los datos transformados con este método. 
+
+```{r include=FALSE}
+rld <- rlog(dds, blind = FALSE)
+```
+```{r echo=FALSE}
+knitr::kable(
+head(assay(rld), 3), booktabs = TRUE, 
+caption = 'Tabla 5. Primeras filas y muestras de los datos transformados con el método rlog')
+```
+
+A continuación, se realiza un gráfico para comparar ambas transformaciones usando las funciones _log2()_, _vst()_ y _rlog()_. 
+
+```{r include=FALSE}
+library("dplyr")
+library("ggplot2")
+
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+```
+
+```{r echo=FALSE, fig.cap = 'Figura 1. Diagrama de dispersión con las transformaciones log2, rlog y vst', fig.align = 'center'}
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+```
+
+El gráfico muestra diagramas de dispersión con las transformaciones _log2_ de recuentos normalizados (añadiendo 1 para eliminar el valor 0), _rlog_ y _vst_. Se observa que la transformación VST tiene un poco de desplazamiento hacia arriba, para aquellos valores que son más pequeños. También se observa que los genes con recuentos bajos (situados abajo a la izquierda) son variables en _log2_ y _vst_, pero con menores diferencias en _rlog_. 
+
+__Distancias entre muestras__
+
+El siguiente paso es evaluar la similitud entre las muestras mediante la distancia que hay entre ellas. 
+
+```{r include=FALSE}
+sampleDists <- dist(t(assay(vsd)))
+sampleDists
+```
+
+```{r echo=FALSE}
+knitr::kable(
+head(sampleDists), booktabs = TRUE, 
+caption = 'Tabla 6. Distancias entre muestras')
+```
+
+Las distancias entre muestras se visualizan mediante un mapa de calor (_heatmap_). Un _heatmap_ es una cuadrícula bidimensional, rectangular y de color que muestra datos en forma de matriz rectangular. Por una parte, el color de cada rectángulo está determinado por el valor de la entrada correspondiente en la matriz. Por otro lado, las filas y columnas de la matriz se reorganizan de acuerdo con algún método de agrupamiento jerárquico, de modo que filas y columnas similares se colocan una al lado de la otra, respectivamente.
+
+Para ello, se usará la función _pheatmap()_ del paquete _pheatmap_. En esta función se indicará que la matriz de distancia tenga las filas y columnas ordenadas. 
+
+```{r eval=FALSE, include=FALSE}
+install.packages("pheatmap")
+```
+```{r include=FALSE}
+library("pheatmap")
+library("RColorBrewer")
+```
+```{r echo=FALSE, fig.cap = 'Figura 2. Heatmap sobre la distancia entre muestras', fig.align = 'center'}
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- NULL
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+En la figura 2, se observa una cuadrícula de color bidimensional, rectangular, que representa cada punto de datos (rectángulo) con un color que refleja cuantitativa y cualitativamente las observaciones experimentales originales.Las filas (y / o columnas) de la matriz se reorganizan independientemente de acuerdo con algún método de agrupamiento jerárquico, de modo que los genes o grupos de genes con patrones de expresión similares son adyacentes.
+
+__Gráfico PCA__
+
+A continuación, se realizará un gráfico de análisis de componentes principales (PCA) con los datos obtenidos de la transformación VST. Este tipo de gráfico es útil para visualizar el efecto general de las covariables experimentales y los efectos por lotes y se utiliza para reducir conjuntos de datos multidimensionales a dimensiones más bajas para poder realizar el análisis. En este caso, agrupa las muestras por grupos de los genes más significativamente desregulados. 
+
+```{r echo=FALSE, fig.cap = 'Figura 3. Gráfico PCA con los datos agrupados según el tipo de infiltración', fig.align = 'center'}
+plotPCA(vsd, intgroup = c("Group"))
+```
+
+```{r echo=FALSE, fig.cap = 'Figura 4. Gráfico PCA con los datos agrupados según el tipo de infiltración y el sexo', fig.align = 'center'}
+plotPCA(vsd, intgroup = c("Group", "sex"))
+```
+
+Se observa que la primera componente principal explica el 64% de la varianza, mientras que la segunda componente principal explica el 6% de la varianza. Las muestras quedan agrupadas según el tipo de infiltración que presentan, y aún quedan más agrupadas si se tiene en cuenta el sexo del individuo de la muestra. 
+
+__Gráfico MDS__
+
+El gráfico MDS (_Multi-dimensional scaling plot_) se realiza cuando se tiene una matriz de distancia. En este caso, se calcula el MDS para las distancias calculadas a partir de los datos calculados con la transformación VST. 
+
+```{r echo=FALSE, fig.cap = 'Figura 5. Gráfico MDS con los datos agrupados según el tipo de infiltración y el sexo', fig.align = 'center'}
+mds <- as.data.frame(colData(vsd))  %>%
+         cbind(cmdscale(sampleDistMatrix))
+ggplot(mds, aes(x = `1`, y = `2`, color = Group, shape = sex)) +
+  geom_point(size = 3) + coord_fixed()
+```
+
+###Análisis de expresión diferencial###
+
+Una vez diseñado el modelo experimental con el objeto _DESeqDataSet_, se procede a realizar el análisis de expresión diferencial de los recuentos con la función _DESeq()_.
+
+```{r include=FALSE}
+dds <- DESeq(dds, parallel =TRUE)
+```
+
+Al realizar esta operación, se obtiene un _DESeqDataSet_ con todos los parámetros ajustados. A continuación, se extaerán las tabla con los resultados de las distintas comparaciones. 
+
+__Comparación NIT vs SFI__
+
+```{r echo=FALSE}
+resNITvsSFI <- results(dds, contrast=c("Group","NIT","SFI"))
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resNITvsSFI), booktabs = TRUE, 
+caption = 'Tabla 7. Tabla con los resultados de la comparación NIT vs SFI')
+```
+
+__Comparación NIT vs ELI__
+
+```{r echo=FALSE}
+resNITvsELI <- results(dds, contrast=c("Group","NIT","ELI"))
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resNITvsELI), booktabs = TRUE, 
+caption = 'Tabla 8. Tabla con los resultados de la comparación NIT vs ELI')
+```
+
+__Comparación SFI vs ELI__
+
+```{r echo=FALSE}
+resSFIvsELI <- results(dds, contrast=c("Group","SFI","ELI"))
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resSFIvsELI), booktabs = TRUE, 
+caption = 'Tabla 9. Tabla con los resultados de la comparación SFI vs ELI')
+```
+
+A continuación, se extrae la información de las columnas de los dataframe obtenidos. 
+
+_comparación NIT vs SFI_
+
+```{r echo=FALSE}
+mcols(resNITvsSFI, use.names = TRUE)
+```
+
+_comparación NIT vs ELI_
+
+```{r echo=FALSE}
+mcols(resNITvsELI, use.names = TRUE)
+```
+
+_comparación SFI vs ELI_
+
+```{r echo=FALSE}
+mcols(resSFIvsELI, use.names = TRUE)
+```
+
+También se pueden resumir los resultados con la función _summary()_.
+
+_comparación NIT vs SFI_
+
+```{r echo=FALSE}
+summary(resNITvsSFI)
+```
+
+_comparación NIT vs ELI_
+
+```{r echo=FALSE}
+summary(resNITvsELI)
+```
+
+_comparación SFI vs ELI_
+
+```{r echo=FALSE}
+summary(resSFIvsELI)
+```
+
+Para considerar de manera más estricta qué conjuntos de genes son significativos, se pueden aplicar dos métodos: bajar el umbral de la tasa de descubrimiento falso o elevar el umbral de cambio de pliegue log2. 
+
+Si se baja el umbral de la tasa de descubrimiento falso:
+
+```{r echo=FALSE}
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+```
+
+Si se eleva el umbral de cambio de pliegue log2:
+
+```{r echo=FALSE}
+resLFC1 <- results(dds, lfcThreshold=1)
+table(resLFC1$padj < 0.1)
+```
+
+Si se considera que el 10% son falsos positivos, todos los genes con un valor p ajustado por debajo del 10% (0.1) serán considerados positivos. 
+
+```{r include=FALSE}
+sum(resNITvsSFI$padj < 0.1, na.rm=TRUE)
+```
+
+- En la comparación NIT vs SFI hay 1640 genes significativos.  
+
+```{r include=FALSE}
+sum(resNITvsELI$padj < 0.1, na.rm=TRUE)
+```
+
+- En la comparación NIT vs ELI hay 8557 genes significativos.  
+
+```{r include=FALSE}
+sum(resSFIvsELI$padj < 0.1, na.rm=TRUE)
+```
+
+- En la comparación SFI vs ELI hay 2929 genes significativos.  
+
+A continuación, se seleccionan los genes significativos de la tabla de resultados y luego se clasifican según la estimación _log2 fold change_ para obtener los genes significativos con una _down-regulation_ más fuerte en cada comparación. 
+
+__Comparación NIT vs SFI__
+
+```{r echo=FALSE}
+resSig1 <- subset(resNITvsSFI, padj < 0.1)
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resSig1[ order(resSig1$log2FoldChange), ]), booktabs = TRUE, 
+caption = 'Tabla 10. Tabla con los genes significativos con una down-regulation más fuerte en la comparación NIT vs SFI')
+```
+
+__Comparación NIT vs ELI__
+
+```{r echo=FALSE}
+resSig2 <- subset(resNITvsELI, padj < 0.1)
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resSig2[ order(resSig2$log2FoldChange), ]), booktabs = TRUE, 
+caption = 'Tabla 11. Tabla con los genes significativos con una down-regulation más fuerte en la comparación NIT vs ELI')
+```
+
+__Comparación SFI vs ELI__
+
+```{r echo=FALSE}
+resSig3 <- subset(resSFIvsELI, padj < 0.1)
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resSig3[ order(resSig3$log2FoldChange), ]), booktabs = TRUE, 
+caption = 'Tabla 12. Tabla con los genes significativos con una down-regulation más fuerte en la comparación SFI vs ELI')
+```
+
+Posteriormente, se realiza el mismo paso pero con los genes significativos con una _up-regulation_ más fuerte. 
+
+__Comparación NIT vs SFI__
+
+```{r echo=FALSE}
+knitr::kable(
+head(resSig1[ order(resSig1$log2FoldChange, decreasing = TRUE), ]), booktabs = TRUE, caption = 'Tabla 13. Tabla con los genes significativos con una up-regulation más fuerte en la comparación NIT vs SFI')
+```
+
+__Comparación NIT vs ELI__
+
+```{r echo=FALSE}
+knitr::kable(
+head(resSig2[ order(resSig2$log2FoldChange, decreasing = TRUE), ]), booktabs = TRUE, caption = 'Tabla 14. Tabla con los genes significativos con una up-regulation más fuerte en la comparación NIT vs ELI')
+```
+
+__Comparación SFI vs ELI__
+
+```{r echo=FALSE}
+knitr::kable(
+head(resSig3[ order(resSig3$log2FoldChange, decreasing = TRUE), ]), booktabs = TRUE, caption = 'Tabla 15. Tabla con los genes significativos con una up-regulation más fuerte en la comparación SFI vs ELI')
+```
+
+__Gráficos de los resultados__
+
+_Gráfico de recuentos_
+
+Para visualizar los recuentos de un gen en particular se usará la función _plotCounts()_ que toma como argumentos el _DESeqDataSet_, el nombre de un gen y el grupo sobre el cual trazar los recuentos.
+
+```{r eval=FALSE, include=FALSE}
+install.packages("ggbeeswarm")
+```
+```{r include=FALSE}
+library("ggbeeswarm")
+```
+
+```{r echo=FALSE, fig.cap = 'Figura 6. Gráfico de los conteos en las distintas muestras del gen ENSG00000231486', fig.align = 'center'}
+topGene1 <- rownames(resNITvsSFI)[which.min(resNITvsSFI$padj)]
+geneCounts1 <- plotCounts(dds, gene = topGene1, intgroup = c("Group"),
+                         returnData = TRUE)
+ggplot(geneCounts1, aes(x = Group, y = count, color = Group, group = Group)) +
+  scale_y_log10() + geom_point(size = 3)
+```
+
+Teniendo en cuenta el gen con un valor p ajustado más bajo de la comparación NIT vs SFI (ENSG00000231486), en la figura se puede observar que, en el grupo ELI, las muestras presentan conteos altos, en el grupo NIT las muestras presentan conteos bajos y en el grupo SFI hay muestras con conteos de muy altos a bajos. 
+
+```{r echo=FALSE, fig.cap = 'Figura 7. Gráfico de los conteos en las distintas muestras del gen ENSG00000156738', fig.align = 'center'}
+topGene2 <- rownames(resNITvsELI)[which.min(resNITvsELI$padj)]
+geneCounts2 <- plotCounts(dds, gene = topGene2, intgroup = c("Group"),
+                         returnData = TRUE)
+ggplot(geneCounts2, aes(x = Group, y = count, color = Group, group = Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()
+```
+
+Teniendo en cuenta el gen con un valor p ajustado más bajo de la comparación NIT vs ELI (ENSG00000231486), en la figura se puede observar que, en el grupo ELI, las muestras presentan conteos altos, en el grupo NIT las muestras presentan conteos bajos y en el grupo SFI hay muestras con conteos de muy altos a bajos.
+
+```{r echo=FALSE, fig.cap = 'Figura 8. Gráfico de los conteos en las distintas muestras del gen ENSG00000230937', fig.align = 'center'}
+topGene3 <- rownames(resSFIvsELI)[which.min(resSFIvsELI$padj)]
+geneCounts3 <- plotCounts(dds, gene = topGene3, intgroup = c("Group"),
+                         returnData = TRUE)
+ggplot(geneCounts3, aes(x = Group, y = count, color = Group, group = Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()
+```
+
+Teniendo en cuenta el gen con un valor p ajustado más bajo de la comparación SFI vs ELI (ENSG00000231486), en la figura 8 se pueden observar conteos muy bajos en todos los grupos.
+
+_Diagrama MA_
+
+Un diagrama MA proporciona una visión general sobre la distribución de los coeficientes estimados en el modelo, como las comparaciones de interés, en todos los genes. 
+
+Antes de realizar el diagrama MA, se utiliza la función _lfcShrink()_ para reducir los _log2 fold changes_ para la comparación de muestras entre grupos. Se usará el método _apeglm_ para reducir los coeficientes, lo cual reducirá las estimaciones LFC de ruido al tiempo que dará estimaciones de LFC de bajo sesgo para grandes diferencias. A continuación, con la función _resultsNames()_ se obtendrán los nombres de los efectos estimados (coeficientes) del modelo.
+
+```{r eval=FALSE, include=FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("apeglm")
+```
+```{r include=FALSE}
+library("apeglm")
+resultsNames(dds)
+```
+
+Los coeficientes obtenidos son "Group_NIT_vs_ELI" y "Group_SFI_vs_ELI".
+
+Con estos dos coeficientes, se aplica la función _lfcShrink()_ con el tipo _apeglm_ y se realiza el diagrama MA. 
+
+```{r include=FALSE}
+res.1 <- lfcShrink(dds, coef="Group_NIT_vs_ELI", type="apeglm")
+```
+```{r include=FALSE, fig.cap = 'Figura 9. Diagrama MA de la comparación NIT vs ELI', fig.align = 'center'}
+plotMA(res.1, ylim = c(-10, 10))
+```
+
+```{r include=FALSE}
+res.2 <- lfcShrink(dds, coef="Group_SFI_vs_ELI", type="apeglm")
+```
+```{r include=FALSE, fig.cap = 'Figura 10. Diagrama MA de la comparación SFI vs ELI', fig.align = 'center'}
+plotMA(res.2, ylim = c(-10, 10))
+```
+
+En el diagrama MA, los genes con niveles de expresión similares entre dos grupos se muestran alrededor de la línea horizontal y = 0. Se observa que entre los grupos SFI y ELI existen más genes con niveles de expresión génica similares que entre los grupos NIT y ELI, ya que no hay tanta dispersión. 
+
+_Agrupación de genes_
+
+A continuación, se agrupan los genes más variables, es decir, aquellos que tienen una varianza mayor entre las muestras. En este caso se seleccionarán los 20 más variables. Se utilizará la función _pheatmap()_ y los datos obtenidos mediante el método VST. 
+
+```{r eval=FALSE, include=FALSE}
+install.packages("pheatmap")
+```
+
+```{r include=FALSE}
+library("genefilter")
+library("pheatmap")
+```
+```{r include=FALSE, fig.cap = 'Figura 11. Gráfico de agrupación de genes', fig.align = 'center'}
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 20)
+mat  <- assay(vsd)[topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c("Group","sex")])
+pheatmap(mat, annotation_col = anno)
+```
+
+###Anotación y exportación de los datos###
+
+Los genes aportados por las tablas sólo contienen los ID de los genes de Ensembl, pero para mejorar la interpretación se requiere saber de qué genes se trata y así tener más información. Para ello, se usará el paquete de anotación correspondiente de Bioconductor. 
+
+```{r include=FALSE}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+columns(org.Hs.eg.db)
+```
+
+Se puede usar la función _mapIds()_ para agregar columnas individuales a la tabla de resultados. Se proporcionan los nombres de la fila de la tabla de resultados en _keys_ y se especifica que _keytype_ sea _ENSEMBL_. El argumento de la columna le dice a la función qué información se quiere, y el argumento _multiVals_ le dice qué debe hacer si hay múltiples valores posibles para un solo valor de entrada. En este caso, se le pide que devuelva el primero que hay en la base de datos. 
+
+__Comparación NIT vs SFI__
+
+```{r include=FALSE}
+resNITvsSFI$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resNITvsSFI),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r include=FALSE}
+resNITvsSFI$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resNITvsSFI),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r echo=FALSE}
+resNITvsSFIOrdered <- resNITvsSFI[order(resNITvsSFI$pvalue),]
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resNITvsSFIOrdered), booktabs = TRUE, caption = 'Tabla 16. Tabla con la anotación de genes del resultado en la comparación NIT vs SFI')
+```
+
+__Comparación NIT vs ELI__
+
+```{r include=FALSE}
+resNITvsELI$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resNITvsELI),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r include=FALSE}
+resNITvsELI$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resNITvsELI),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r echo=FALSE}
+resNITvsELIOrdered <- resNITvsELI[order(resNITvsELI$pvalue),]
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resNITvsELIOrdered), booktabs = TRUE, caption = 'Tabla 17. Tabla con la anotación de genes del resultado en la comparación NIT vs ELI')
+```
+
+__Comparación SFI vs ELI__
+
+```{r include=FALSE}
+resSFIvsELI$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resSFIvsELI),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r include=FALSE}
+resSFIvsELI$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resSFIvsELI),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r echo=FALSE}
+resSFIvsELIOrdered <- resSFIvsELI[order(resSFIvsELI$pvalue),]
+```
+```{r echo=FALSE}
+knitr::kable(
+head(resSFIvsELIOrdered), booktabs = TRUE, caption = 'Tabla 18. Tabla con la anotación de genes del resultado en la comparación SFI vs ELI')
+```
+
+__Exportar resultados__
+
+Finalmente, se guardan los resultados en un archivo _.csv_.<div/> 
+
+```{r include=FALSE}
+resNITvsSFIOrderedDF <- as.data.frame(resNITvsSFIOrdered)
+write.csv(resNITvsSFIOrderedDF, file = "resNITvsSFIOrdered.csv")
+```
+
+```{r include=FALSE}
+resNITvsELIOrderedDF <- as.data.frame(resNITvsELIOrdered)
+write.csv(resNITvsELIOrderedDF, file = "resNITvsELIOrdered.csv")
+```
+
+```{r include=FALSE}
+resSFIvsELIOrderedDF <- as.data.frame(resSFIvsELIOrdered)
+write.csv(resSFIvsELIOrderedDF, file = "resSFIvsELIOrdered.csv")
+```
+
+#RESULTADOS#
+
+<div style="text-align: justify">El análisis de ultrasecuenciación realizado sobre 30 muestras y un _DESeqDataSet_ de 43525 tránscritos, se obtienen los siguientes resultados en las siguientes comparaciones:
+
+__Comparación NIT vs SFI__
+
+En esta comparación se observa:
+
+- LFC > 0 (up): 430 genes (0.99%)
+- LFC < 0 (down): 1210 genes (2.8%)
+- Ouliers: 0
+- Recuentos bajos: 14348 (33%)
+
+Se consideran genes significativos aquellos que tienen un valor p ajustado inferior a 0.1. En esta comparación, se observan 1640 genes significativos. De ellos, el que tiene un valor p inferior es el __gen MZB1__ (51237 en Entrez). Este gen se encuentra en el cromosoma 5, en la región 139,387,467-139,390,081 (_reverse strand_), y codifica para la `proteína específica de células de la zona marginal B y B1. Se asocia con las cadenas pesadas y ligeras de inmunoglobulina M (IgM) y promueve el ensamblaje y secreción de IgM. Puede ejercer su efecto al actuar como chaperona molecular o como oxidorreductasa, ya que muestra un bajo nivel de actividad de oxidorreductasa (por similitud). La isoforma 2 puede estar involucrada en la regulación de la apoptosis. Ayuda a diversificar las funciones periféricas de las células B mediante la regulación de las reservas de calcio, la secreción de anticuerpos y la activación de la integrina.También actúa como una adipocina regulada por hormonas / citocina proinflamatoria que está implicada en causar inflamación crónica, afectando la expansión celular y atenuando la respuesta de la insulina en los adipocitos. Puede tener un papel en el inicio de la resistencia a la insulina.[3][4][5]
+
+__Comparación NIT vs ELI__
+
+En esta comparación se observa:
+
+- LFC > 0 (up): 3747 genes (8.6%)
+- LFC < 0 (down): 4810 genes (11%)
+- Ouliers: 0
+- Recuentos bajos: 12660 (29%)
+
+En esta comparación, se observan 8557 genes significativos. De ellos, el que tiene un valor p inferior es el __gen MS4A1__ (931 en Entrez). Este gen se encuentra en el cromosoma 11, en la región 60,455,846-60,470,752 (_forward strand_), y codifica para una proteína de membrana de la família de genes 4A de la membrana. Se trata de una proteína de membrana específica de linfocitos B que desempeña un papel en la regulación de la entrada de calcio celular necesaria para el desarrollo, la diferenciación y la activación de los linfocitos B. Funciona como un componente del canal de calcio (SOC) que promueve la entrada de calcio después de la activación por el receptor de células B / BCR. [6][7][8]
+
+__Comparación SFI vs ELI__
+
+En esta comparación se observa:
+
+- LFC > 0 (up): 1180 genes (2.7%)
+- LFC < 0 (down): 1749 genes (4%)
+- Ouliers: 0
+- Recuentos bajos: 18566 (43%)
+
+En esta comparación, se observan 2929 genes significativos. De ellos, el que tiene un valor p inferior es el __gen SLC7A11__ (23657 en Entrez). Este gen se encuentra en el cromosoma 4, en la región 138,164,097-138,242,349 (_reverse strand_), y codifica para un miembro de un sistema de transporte de aminoácidos aniónico heteromérico, independiente de sodio, que es altamente específico para la cisteína y el glutamato. Esta proteína ha sido identificada como el mediador predominante de la fusión del herpesvirus asociado al sarcoma de Kaposi y la permisividad de entrada en las células. Además, el aumento de la expresión de este gen en los gliomas primarios (en comparación con el tejido cerebral normal) se asoció con un aumento de la secreción de glutamato a través de los canales XCT, lo que resultó en la muerte celular neuronal. [9][10][11]<div/>
+
+
+#DISCUSIÓN#
+
+<div style="text-align: justify">El análisis realizado ha finalizado con la expresión diferencial de 43525 tránscritos, lo cual resulta ser un número bastante elevado con el que posteriormente obtener resultados y realizar la anotación correspondiente, pues implica bastante tiempo. 
+
+También cabe señalar la alta cantidad de tránscritos de Ensembl que no corresponden a genes, con lo que se observa un número elevado de valores NA en las columnas correspondientes al nombre de gen o número de Entrez. Así pues, se puede perder información sobre la función y a qué corresponden estos tránscritos.<div/>
+
+#APÉNDICE#
+
+__Obtención de los datos__
+
+
+```{r eval = FALSE, echo = TRUE}
+library(readr)
+targets <- read_csv("~/Màster de Bioinformàtica i Bioestadística/Anàlisi de dades òmiques/PEC 2/targets.csv")
+counts <- read_delim("~/Màster de Bioinformàtica i Bioestadística/Anàlisi de dades òmiques/PEC 2/counts.csv",";", escape_double = FALSE, trim_ws = TRUE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+set.seed(59)
+library(dplyr)
+```
+
+```{r eval = FALSE, echo = TRUE}
+NIT <- subset(targets,Grupo_analisis==1)
+NIT.sample <- sample_n(NIT,size=10)
+```
+
+```{r eval = FALSE, echo = TRUE}
+SFI <- subset(targets,Grupo_analisis==2)
+SFI.sample <- sample_n(SFI,size=10)
+```
+
+```{r eval = FALSE, echo = TRUE}
+ELI <- subset(targets,Grupo_analisis==3)
+ELI.sample <- sample_n(ELI,size=10)
+```
+
+```{r eval = FALSE, echo = TRUE}
+samples <- rbind(NIT.sample,SFI.sample,ELI.sample)
+```
+
+```{r eval = FALSE, echo = TRUE}
+library(knitr)
+knitr::kable(
+samples, booktabs = TRUE, 
+caption = 'Tabla 1. Información de las 30 muestras obtenidas aleatoriamente del archivo targets')
+```
+
+```{r eval = FALSE, echo = TRUE}
+counts$X1<-gsub("\\..*", "", counts$X1, fixed = FALSE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+counts.samples <- select(counts,samples$Sample_Name)
+```
+
+```{r eval = FALSE, echo = TRUE}
+Ensembl.gene <- counts$X1
+```
+
+```{r eval = FALSE, echo = TRUE}
+countdata <- cbind(Ensembl.gene,counts.samples,row.names=1)
+```
+
+```{r eval = FALSE, echo = TRUE}
+library(knitr)
+knitr::kable(
+head(countdata), booktabs = TRUE, 
+caption = 'Tabla 2. Primeras filas de la tabla de conteos de las 30 muestras')
+```
+
+```{r eval = FALSE, echo = TRUE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("DESeq2")
+```
+
+```{r eval = FALSE, echo = TRUE}
+library(DESeq2)
+```
+
+```{r eval = FALSE, echo = TRUE}
+dds <- DESeqDataSetFromMatrix(countData = countdata,
+                              colData = samples,
+                              design = ~ Group)
+```
+
+```{r eval = FALSE, echo = TRUE}
+dds
+```
+
+__Prefiltrado del conjunto de datos__
+
+```{r eval = FALSE, echo = TRUE}
+nrow(dds)
+```
+
+```{r eval = FALSE, echo = TRUE}
+dds <- dds[rowSums(counts(dds)) > 1, ]
+nrow(dds)
+```
+
+__Transformación estabilizadora de la varianza__
+
+```{r eval = FALSE, echo = TRUE}
+vsd <- vst(dds, blind=FALSE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(assay(vsd),3), booktabs = TRUE, 
+caption = 'Tabla 3. Primeras filas y muestras de los datos transformados con el método VST')
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(colData(vsd),3), booktabs = TRUE, 
+caption = 'Tabla 4. Información de las muestras tras la transformación VST')
+```
+
+```{r eval = FALSE, echo = TRUE}
+rld <- rlog(dds, blind = FALSE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(assay(rld), 3), booktabs = TRUE, 
+caption = 'Tabla 5. Primeras filas y muestras de los datos transformados con el método rlog')
+```
+
+```{r eval = FALSE, echo = TRUE}
+library("dplyr")
+library("ggplot2")
+
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 1. Diagrama de dispersión con las transformaciones log2, rlog y vst', fig.align = 'center'}
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+```
+
+__Distancias entre muestras__
+
+```{r eval = FALSE, echo = TRUE}
+sampleDists <- dist(t(assay(vsd)))
+sampleDists
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(sampleDists), booktabs = TRUE, 
+caption = 'Tabla 6. Distancias entre muestras')
+```
+
+```{r eval = FALSE, echo = TRUE}
+install.packages("pheatmap")
+```
+
+```{r eval = FALSE, echo = TRUE}
+library("pheatmap")
+library("RColorBrewer")
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 2. Heatmap sobre la distancia entre muestras', fig.align = 'center'}
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- NULL
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+__Gráfico PCA__
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 3. Gráfico PCA con los datos agrupados según el tipo de infiltración', fig.align = 'center'}
+plotPCA(vsd, intgroup = c("Group"))
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 4. Gráfico PCA con los datos agrupados según el tipo de infiltración y el sexo', fig.align = 'center'}
+plotPCA(vsd, intgroup = c("Group", "sex"))
+```
+
+__Gráfico MDS__
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 5. Gráfico MDS con los datos agrupados según el tipo de infiltración y el sexo', fig.align = 'center'}
+mds <- as.data.frame(colData(vsd))  %>%
+         cbind(cmdscale(sampleDistMatrix))
+ggplot(mds, aes(x = `1`, y = `2`, color = Group, shape = sex)) +
+  geom_point(size = 3) + coord_fixed()
+```
+
+__Análisis de expresión diferencial_###__
+
+```{r eval = FALSE, echo = TRUE}
+dds <- DESeq(dds, parallel =TRUE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsSFI <- results(dds, contrast=c("Group","NIT","SFI"))
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resNITvsSFI), booktabs = TRUE, 
+caption = 'Tabla 7. Tabla con los resultados de la comparación NIT vs SFI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsELI <- results(dds, contrast=c("Group","NIT","ELI"))
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resNITvsELI), booktabs = TRUE, 
+caption = 'Tabla 8. Tabla con los resultados de la comparación NIT vs ELI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+resSFIvsELI <- results(dds, contrast=c("Group","SFI","ELI"))
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resSFIvsELI), booktabs = TRUE, 
+caption = 'Tabla 9. Tabla con los resultados de la comparación SFI vs ELI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+mcols(resNITvsSFI, use.names = TRUE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+mcols(resNITvsELI, use.names = TRUE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+mcols(resSFIvsELI, use.names = TRUE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+summary(resNITvsSFI)
+```
+
+```{r eval = FALSE, echo = TRUE}
+summary(resNITvsELI)
+```
+
+```{r eval = FALSE, echo = TRUE}
+summary(resSFIvsELI)
+```
+
+```{r eval = FALSE, echo = TRUE}
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+```
+
+```{r eval = FALSE, echo = TRUE}
+resLFC1 <- results(dds, lfcThreshold=1)
+table(resLFC1$padj < 0.1)
+```
+
+```{r eval = FALSE, echo = TRUE}
+sum(resNITvsSFI$padj < 0.1, na.rm=TRUE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+sum(resNITvsELI$padj < 0.1, na.rm=TRUE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+sum(resSFIvsELI$padj < 0.1, na.rm=TRUE)
+```
+
+```{r eval = FALSE, echo = TRUE}
+resSig1 <- subset(resNITvsSFI, padj < 0.1)
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resSig1[ order(resSig1$log2FoldChange), ]), booktabs = TRUE, 
+caption = 'Tabla 10. Tabla con los genes significativos con una down-regulation más fuerte en la comparación NIT vs SFI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+resSig2 <- subset(resNITvsELI, padj < 0.1)
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resSig2[ order(resSig2$log2FoldChange), ]), booktabs = TRUE, 
+caption = 'Tabla 11. Tabla con los genes significativos con una down-regulation más fuerte en la comparación NIT vs ELI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+resSig3 <- subset(resSFIvsELI, padj < 0.1)
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resSig3[ order(resSig3$log2FoldChange), ]), booktabs = TRUE, 
+caption = 'Tabla 12. Tabla con los genes significativos con una down-regulation más fuerte en la comparación SFI vs ELI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resSig1[ order(resSig1$log2FoldChange, decreasing = TRUE), ]), booktabs = TRUE, caption = 'Tabla 13. Tabla con los genes significativos con una up-regulation más fuerte en la comparación NIT vs SFI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resSig2[ order(resSig2$log2FoldChange, decreasing = TRUE), ]), booktabs = TRUE, caption = 'Tabla 14. Tabla con los genes significativos con una up-regulation más fuerte en la comparación NIT vs ELI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resSig3[ order(resSig3$log2FoldChange, decreasing = TRUE), ]), booktabs = TRUE, caption = 'Tabla 15. Tabla con los genes significativos con una up-regulation más fuerte en la comparación SFI vs ELI')
+```
+
+__Gráficos de los resultados__
+
+```{r eval = FALSE, echo = TRUE}
+install.packages("ggbeeswarm")
+```
+```{r eval = FALSE, echo = TRUE}
+library("ggbeeswarm")
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 6. Gráfico de los conteos en las distintas muestras del gen ENSG00000231486', fig.align = 'center'}
+topGene1 <- rownames(resNITvsSFI)[which.min(resNITvsSFI$padj)]
+geneCounts1 <- plotCounts(dds, gene = topGene1, intgroup = c("Group"),
+                         returnData = TRUE)
+ggplot(geneCounts1, aes(x = Group, y = count, color = Group, group = Group)) +
+  scale_y_log10() + geom_point(size = 3)
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 7. Gráfico de los conteos en las distintas muestras del gen ENSG00000156738', fig.align = 'center'}
+topGene2 <- rownames(resNITvsELI)[which.min(resNITvsELI$padj)]
+geneCounts2 <- plotCounts(dds, gene = topGene2, intgroup = c("Group"),
+                         returnData = TRUE)
+ggplot(geneCounts2, aes(x = Group, y = count, color = Group, group = Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 8. Gráfico de los conteos en las distintas muestras del gen ENSG00000230937', fig.align = 'center'}
+topGene3 <- rownames(resSFIvsELI)[which.min(resSFIvsELI$padj)]
+geneCounts3 <- plotCounts(dds, gene = topGene3, intgroup = c("Group"),
+                         returnData = TRUE)
+ggplot(geneCounts3, aes(x = Group, y = count, color = Group, group = Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()
+```
+
+```{r eval = FALSE, echo = TRUE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("apeglm")
+```
+```{r eval = FALSE, echo = TRUE}
+library("apeglm")
+resultsNames(dds)
+```
+
+```{r eval = FALSE, echo = TRUE}
+res.1 <- lfcShrink(dds, coef="Group_NIT_vs_ELI", type="apeglm")
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 9. Diagrama MA de la comparación NIT vs ELI', fig.align = 'center'}
+plotMA(res.1, ylim = c(-10, 10))
+```
+
+```{r eval = FALSE, echo = TRUE}
+res.2 <- lfcShrink(dds, coef="Group_SFI_vs_ELI", type="apeglm")
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 10. Diagrama MA de la comparación SFI vs ELI', fig.align = 'center'}
+plotMA(res.2, ylim = c(-10, 10))
+```
+
+```{r eval = FALSE, echo = TRUE}
+install.packages("pheatmap")
+```
+
+```{r eval = FALSE, echo = TRUE}
+library("genefilter")
+library("pheatmap")
+```
+
+```{r eval = FALSE, echo = TRUE, fig.cap = 'Figura 11. Gráfico de agrupación de genes', fig.align = 'center'}
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 20)
+mat  <- assay(vsd)[topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c("Group","sex")])
+pheatmap(mat, annotation_col = anno)
+```
+
+__Anotación y exportación de los datos__
+
+```{r eval = FALSE, echo = TRUE}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+columns(org.Hs.eg.db)
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsSFI$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resNITvsSFI),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsSFI$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resNITvsSFI),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsSFIOrdered <- resNITvsSFI[order(resNITvsSFI$pvalue),]
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resNITvsSFIOrdered), booktabs = TRUE, caption = 'Tabla 16. Tabla con la anotación de genes del resultado en la comparación NIT vs SFI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsELI$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resNITvsELI),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsELI$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resNITvsELI),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsELIOrdered <- resNITvsELI[order(resNITvsELI$pvalue),]
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resNITvsELIOrdered), booktabs = TRUE, caption = 'Tabla 17. Tabla con la anotación de genes del resultado en la comparación NIT vs ELI')
+```
+
+```{r eval = FALSE, echo = TRUE}
+resSFIvsELI$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resSFIvsELI),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r eval = FALSE, echo = TRUE}
+resSFIvsELI$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(resSFIvsELI),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+```
+
+```{r eval = FALSE, echo = TRUE}
+resSFIvsELIOrdered <- resSFIvsELI[order(resSFIvsELI$pvalue),]
+```
+
+```{r eval = FALSE, echo = TRUE}
+knitr::kable(
+head(resSFIvsELIOrdered), booktabs = TRUE, caption = 'Tabla 18. Tabla con la anotación de genes del resultado en la comparación SFI vs ELI')
+```
+
+__Exportar resultados__
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsSFIOrderedDF <- as.data.frame(resNITvsSFIOrdered)
+write.csv(resNITvsSFIOrderedDF, file = "resNITvsSFIOrdered.csv")
+```
+
+```{r eval = FALSE, echo = TRUE}
+resNITvsELIOrderedDF <- as.data.frame(resNITvsELIOrdered)
+write.csv(resNITvsELIOrderedDF, file = "resNITvsELIOrdered.csv")
+```
+
+```{r eval = FALSE, echo = TRUE}
+resSFIvsELIOrderedDF <- as.data.frame(resSFIvsELIOrdered)
+write.csv(resSFIvsELIOrderedDF, file = "resSFIvsELIOrdered.csv")
+```
+
+#BIBLIOGRAFÍA#
+
+[1] Armengol MP, Juan M, Lucas-Martín A, et al. Thyroid autoimmune disease: demonstration of thyroid antigen-specific B cells and recombination-activating gene expression in chemokine-containing active intrathyroidal germinal centers. Am J Pathol. 2001;159(3):861‐873. doi:10.1016/S0002-9440(10)61762-2
+
+[2] Caturegli P, De Remigis A, Rose NR. Hashimoto thyroiditis: clinical and diagnostic criteria. Autoimmun Rev. 2014;13(4-5):391‐397. doi:10.1016/j.autrev.2014.01.007
+
+[3] https://www.ncbi.nlm.nih.gov/gene/51237
+
+[4] http://www.ensembl.org/Homo_sapiens/Gene/Summary?g=ENSG00000170476;r=5:139387467-139390081
+
+[5] https://www.uniprot.org/uniprot/Q8WU39
+
+[6] https://www.ncbi.nlm.nih.gov/gene/931
+
+[7] http://www.ensembl.org/Homo_sapiens/Gene/Summary?g=ENSG00000156738;r=11:60455846-60470752
+
+[8] https://www.uniprot.org/uniprot/P11836
+
+[9] https://www.ncbi.nlm.nih.gov/gene/23657
+
+[10] http://www.ensembl.org/Homo_sapiens/Gene/Summary?g=ENSG00000151012;r=4:138164097-138242349
+
+[11] https://www.uniprot.org/uniprot/Q9UPY5
